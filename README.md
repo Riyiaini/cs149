@@ -1,4 +1,4 @@
-# CS149
+# STANFOED CS149 PARALLEL COMPUTING
 
 ## asst1
     -finished
