@@ -1,0 +1,16 @@
+# STANFORD CS149 PARALLEL COMPUTING
+
+## asst1
+    -finished
+
+## asst2
+    -working
+
+## asst3
+    ~
+
+## asst4
+    ~
+
+## asst5
+    ~
