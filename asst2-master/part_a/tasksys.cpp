@@ -114,8 +114,7 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
     return "Parallel + Thread Pool + Spin";
 }
 
-TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): ITaskSystem(num_threads) 
-    , threadPool(num_threads) {
+TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): ITaskSystem(num_threads) {
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
@@ -124,34 +123,46 @@ TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int n
     //
 
     taskCount = total_tasks = 0;
+    left_tasks = -1;
     terminated = false;
     for(int i = 0; i < num_threads; i++) {
-        threadPool.emplace_back([this]() {worker();});
+        threadPool.emplace_back([this, i]() {worker(); });
     }
 }
 
-TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {}
+TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
+
+    terminated = true;
+
+    for(auto& t : threadPool) {
+        if(t.joinable()) {
+            t.join();
+        }
+    }
+}
 
 void TaskSystemParallelThreadPoolSpinning::worker() {
     while(!terminated) {
-        std::unique_lock<std::mutex> lock(lk);
-        int taskid = taskCount;
+        std::unique_lock<std::mutex> lock_w(lk_worker);
+        int taskid = total_tasks - left_tasks;
 
         if(taskid >= total_tasks) {
-            lock.unlock();
+            lock_w.unlock();
             std::this_thread::yield();
             continue;
         }
         
-        taskCount++;
-        lock.unlock();
+        left_tasks--;
+        lock_w.unlock();
+
+        runner->runTask(taskid, total_tasks);
 
         // printf("runnignf taskid: %d\n", taskid);
-        runner->runTask(taskid, total_tasks);
+        {
+            std::lock_guard<std::mutex> lock_f(lk_finish);
+            taskCount++;
+        }
     }
-
-    // std::thread::id id = std::this_thread::get_id();
-    // printf("thread %zu done\n", std::hash<std::thread::id>{}(id));
 }
 
 void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_total_tasks) {
@@ -165,16 +176,14 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
 
     
     runner = runnable;
+    taskCount = 0;
     total_tasks = num_total_tasks;
+    left_tasks = num_total_tasks;
 
     while(taskCount < num_total_tasks){
         std::this_thread::yield();
     }
-    terminated = true;
-    for(auto& t : threadPool) {
-        if(t.joinable())
-            t.join();
-    }
+    
 }
 
 TaskID TaskSystemParallelThreadPoolSpinning::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
@@ -205,6 +214,38 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    
+    taskCount = 0;
+    total_tasks = left_tasks = -1;
+    terminated = false;
+    for(int i = 0; i < num_threads; i++) {
+        threadPool.emplace_back([this](){ worker(); });
+    }
+}
+
+void TaskSystemParallelThreadPoolSleeping::worker() {
+    while(true) {
+        std::unique_lock<std::mutex> lock_w(lk_worker);
+        cv_worker.wait(lock_w, [this](){ return left_tasks > 0 || terminated;});
+
+        if(left_tasks == 0 && terminated){
+            break;
+        }
+
+        int taskid = total_tasks - left_tasks;
+        left_tasks--;
+        lock_w.unlock();
+
+        runner->runTask(taskid, total_tasks);
+
+        {
+            std::lock_guard<std::mutex> lock_f(lk_finish);
+            taskCount++;
+            if(taskCount == total_tasks) {
+                cv_run.notify_one();
+            }
+        }
+    }
 }
 
 TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
@@ -214,6 +255,17 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+
+    terminated = true;
+    cv_worker.notify_all();    
+
+    for(auto& t : threadPool) 
+    {
+        if(t.joinable()) 
+        {
+            t.join();
+        }
+    }
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
@@ -225,8 +277,15 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // tasks sequentially on the calling thread.
     //
 
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+    runner = runnable;
+    total_tasks = left_tasks = num_total_tasks;
+    taskCount = 0;
+
+    cv_worker.notify_all();
+
+    {
+        std::unique_lock<std::mutex> lock_f(lk_finish);
+        cv_run.wait(lock_f, [this](){ return taskCount == total_tasks; });
     }
 }
 
