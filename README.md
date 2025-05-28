@@ -1,16 +1,16 @@
-#CS149
+# CS149
 
-##asst1
-  -finished
+## asst1
+    -finished
 
-##asst2
-  -working
+## asst2
+    -working
 
-##asst3
-  ~
+## asst3
+    ~
 
-##asst4
-  ~
+## asst4
+    ~
 
-##asst5
-  ~
+## asst5
+    ~
