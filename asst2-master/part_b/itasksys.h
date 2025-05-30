@@ -66,5 +66,8 @@ class ITaskSystem {
           runXXX calls are done.
          */
         virtual void sync() = 0;
+
+    protected:
+        int _num_threads; // Maximum number of threads that the task system can use.
 };
 #endif

@@ -139,6 +139,9 @@ TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
             t.join();
         }
     }
+
+    threadPool.clear();
+    runner = nullptr;
 }
 
 void TaskSystemParallelThreadPoolSpinning::worker() {
@@ -259,13 +262,15 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     terminated = true;
     cv_worker.notify_all();    
 
-    for(auto& t : threadPool) 
-    {
-        if(t.joinable()) 
-        {
+    for(auto& t : threadPool) {
+        if(t.joinable()) {
             t.join();
         }
     }
+
+    threadPool.clear();
+    runner = nullptr;
+    
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
