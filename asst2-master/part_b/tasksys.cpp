@@ -149,7 +149,7 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     }
 
     for (int i = 0; i < num_threads; i++) {
-        threadPool.emplace_back([this, i]() { worker(i); });
+        threadPool.emplace_back([this]() { worker(); });
     }
 }
 
@@ -171,16 +171,15 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     threadPool.clear();
 }
 
-void TaskSystemParallelThreadPoolSleeping::worker(int id) {
+void TaskSystemParallelThreadPoolSleeping::worker() {
     while (true) {
         task_t task;
         std::unique_lock<std::mutex> lock_w(lk_worker);
-        cv_worker.wait(lock_w, [this, &task, id]() {
+        cv_worker.wait(lock_w, [this, &task]() {
             task = getTask(); 
             return !task.isnull() || terminated; 
         });
 
-        // printf("worker %d got task %d, part %d\n", id, task.task_id, task.taskCount);
         if (terminated && task.isnull()) {
             break;
         }
@@ -240,10 +239,6 @@ TaskSystemParallelThreadPoolSleeping::task_t TaskSystemParallelThreadPoolSleepin
                 ++it;
             }
         }
-        /* if (!returnTask.isnull()) {
-            cv_worker.notify_all();
-        }
-        return returnTask; */
     }
     return {-1, -1, -1, nullptr, {}};
 }
@@ -314,7 +309,7 @@ void TaskSystemParallelThreadPoolSleeping::sync() {
 
     std::unique_lock<std::mutex> lock_f(lk_run);
     cv_finish.wait(lock_f, [this]() {
-        for (int i = 0; i < MAX_TASKS; i++) {
+        for (int i = 0; i < next_task_id; i++) {
             if (running[i]) {
                 return false;
             }
