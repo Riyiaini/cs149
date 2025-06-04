@@ -106,7 +106,7 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         bool isReady(task_t& task);
         int done[MAX_TASKS];
         bool running[MAX_TASKS];
-        void worker(int id);
+        void worker();
 };
 
 #endif
