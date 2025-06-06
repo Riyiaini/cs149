@@ -4,10 +4,10 @@
     -finished
 
 ## asst2
-    -working
+    -finished
 
 ## asst3
-    ~
+    -finished
 
 ## asst4
     ~
