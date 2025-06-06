@@ -3,10 +3,14 @@
 #include <math.h>
 #include <stdio.h>
 #include <vector>
+#include <assert.h>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <driver_functions.h>
+#include <thrust/device_vector.h>
+#include <thrust/scan.h>
+#include <thrust/sort.h>
 
 #include "cudaRenderer.h"
 #include "image.h"
@@ -55,6 +59,10 @@ __constant__ float  cuConstColorRamp[COLOR_MAP_SIZE][3];
 // file simpler and to seperate code that should not be modified
 #include "noiseCuda.cu_inl"
 #include "lookupColor.cu_inl"
+#include "circleBoxTest.cu_inl"
+#include "exclusiveScan.cu_inl"
+#define BLOCK_DIM 32
+#define BLOCK_SIZE (BLOCK_DIM * BLOCK_DIM)
 
 
 // kernelClearImageSnowflake -- (CUDA device code)
@@ -429,6 +437,64 @@ __global__ void kernelRenderCircles() {
 
 ////////////////////////////////////////////////////////////////////////////////////////
 
+__global__ void kernelRenderPixels() {
+
+    int pixelX = blockIdx.x * blockDim.x + threadIdx.x;
+    int pixelY = blockIdx.y * blockDim.y + threadIdx.y;
+    int threadId = blockDim.x * threadIdx.y + threadIdx.x;
+    int imgWidth = cuConstRendererParams.imageWidth;
+    int imgHeight = cuConstRendererParams.imageHeight;
+
+    float dx = 1.0f / imgWidth;
+    float dy = 1.0f / imgHeight;
+
+
+    float boxL = blockDim.x * blockIdx.x * dx;
+    float boxR = (blockDim.x * (blockIdx.x + 1) < imgWidth ?
+                  blockDim.x * (blockIdx.x + 1) : imgWidth) * dx;
+    float boxB = blockDim.y * blockIdx.y * dy;
+    float boxT = (blockDim.y * (blockIdx.y + 1) < imgHeight ?
+                  blockDim.y * (blockIdx.y + 1) : imgHeight) * dy;
+
+    float2 pixelCenter = make_float2(dx * ((float)pixelX + 0.5), dy * ((float)pixelY + 0.5));
+    float4* pixelPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imgWidth + pixelX)]);
+
+    __shared__ uint preSumIn[BLOCK_SIZE];
+    __shared__ uint preSumOut[BLOCK_SIZE];
+    __shared__ uint scratch[2*BLOCK_SIZE];
+    __shared__ uint circles[BLOCK_SIZE];
+
+    int numCircles = cuConstRendererParams.numCircles;
+    for (int i = 0; i < numCircles; i += BLOCK_SIZE) {
+
+        uint circleId = i + threadId;
+        if (circleId < numCircles) {
+            // check if the circle may intersect this box
+            float rad = cuConstRendererParams.radius[circleId];
+            float3 p = *(float3*)&cuConstRendererParams.position[circleId*3];
+            preSumIn[threadId] = circleInBox(p.x, p.y, rad, boxL, boxR, boxT, boxB);  
+        } else {
+            preSumIn[threadId] = 0;
+        }
+        __syncthreads();
+
+        sharedMemExclusiveScan(threadId, preSumIn, preSumOut, scratch, BLOCK_SIZE);
+        __syncthreads();
+
+        if (preSumIn[threadId])
+            circles[preSumOut[threadId]] = circleId;
+        __syncthreads();
+
+        
+        if (pixelX < imgWidth && pixelY < imgHeight) {
+            uint sum = preSumOut[BLOCK_SIZE-1] + preSumIn[BLOCK_SIZE-1];
+            for (int j = 0; j < sum; j++) {
+                float3 p = *(float3*)&cuConstRendererParams.position[circles[j]*3];
+                shadePixel(circles[j], pixelCenter, p, pixelPtr);
+            }
+        }
+    }
+}
 
 CudaRenderer::CudaRenderer() {
     image = NULL;
@@ -635,11 +701,11 @@ CudaRenderer::advanceAnimation() {
 
 void
 CudaRenderer::render() {
+    
+    dim3 blockDim(BLOCK_DIM, BLOCK_DIM);
+    dim3 gridDim(
+        (image->width + blockDim.x - 1) / blockDim.x,
+        (image->height + blockDim.y - 1) / blockDim.y);
 
-    // 256 threads per block is a healthy number
-    dim3 blockDim(256, 1);
-    dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
-
-    kernelRenderCircles<<<gridDim, blockDim>>>();
-    cudaDeviceSynchronize();
+    kernelRenderPixels<<<gridDim, blockDim>>>();
 }
